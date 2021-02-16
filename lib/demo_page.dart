@@ -1,4 +1,6 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_engage/_shared_text_widget.dart';
 
 class DemoPage extends StatefulWidget {
@@ -61,11 +63,168 @@ class SelectableTextDemo extends StatefulWidget {
 }
 
 class _SelectableTextDemoState extends State<SelectableTextDemo> {
+  final _textKey = GlobalKey();
+
+  final List<Rect> _textRects = [];
+  final List<Rect> _selectionRects = [];
+  Rect _caretRect = Rect.zero;
+
+  int _selectionBaseOffset;
+  TextSelection _textSelection = TextSelection.collapsed(offset: -1);
+
+  MouseCursor _cursor = SystemMouseCursors.basic;
+
+  @override
+  void initState() {
+    super.initState();
+
+    WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
+      _updateAllTextRects();
+    });
+  }
+
+  RenderParagraph get _renderParagraph => _textKey.currentContext.findRenderObject() as RenderParagraph;
+
+  void _onPanStart(DragStartDetails details) {
+    if (_renderParagraph == null) {
+      return;
+    }
+
+    _selectionBaseOffset = _renderParagraph.getPositionForOffset(details.localPosition).offset;
+    _textSelection = TextSelection.collapsed(offset: _selectionBaseOffset);
+    _updateSelectionDisplay();
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    final selectionExtentOffset = _renderParagraph.getPositionForOffset(details.localPosition).offset;
+    _textSelection = TextSelection(
+      baseOffset: _selectionBaseOffset,
+      extentOffset: selectionExtentOffset,
+    );
+    _updateSelectionDisplay();
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    // TODO:
+  }
+
+  void _onPanCancel() {
+    // TODO:
+  }
+
+  void _updateSelectionDisplay() {
+    // Compute selection rectangles.
+    final selectionRects = _computeRectsForSelection(_textSelection);
+
+    // Update caret display
+    final caretOffset = _renderParagraph.getOffsetForCaret(_textSelection.extent, Rect.zero);
+    final caretHeight = _renderParagraph.getFullHeightForCaret(_textSelection.extent);
+
+    setState(() {
+      _selectionRects
+        ..clear()
+        ..addAll(selectionRects);
+      _caretRect = Rect.fromLTWH(caretOffset.dx - 1, caretOffset.dy, 2, caretHeight);
+
+      widget.onSelectionChange?.call(_textSelection);
+    });
+  }
+
+  void _onMouseMove(event) {
+    if (event is PointerHoverEvent) {
+      if (_renderParagraph == null) {
+        return;
+      }
+
+      final allTextRects = _computeRectsForSelection(
+        TextSelection(
+          baseOffset: 0,
+          extentOffset: widget.text.length,
+        ),
+      );
+      bool isOverText = false;
+      for (final rect in allTextRects) {
+        if (rect.contains(event.localPosition)) {
+          isOverText = true;
+        }
+      }
+
+      final newCursor = isOverText ? SystemMouseCursors.text : SystemMouseCursors.basic;
+      if (newCursor != _cursor) {
+        setState(() {
+          _cursor = newCursor;
+        });
+      }
+    }
+  }
+
+  void _updateAllTextRects() {
+    setState(() {
+      _textRects
+        ..clear()
+        ..addAll(
+          _computeRectsForSelection(
+            TextSelection(
+              baseOffset: 0,
+              extentOffset: widget.text.length,
+            ),
+          ),
+        );
+    });
+  }
+
+  List<Rect> _computeRectsForSelection(TextSelection textSelection) {
+    if (_renderParagraph == null) {
+      return [];
+    }
+
+    final textBoxes = _renderParagraph.getBoxesForSelection(textSelection);
+    return textBoxes.map((box) => box.toRect()).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Text(
-      widget.text,
-      style: widget.style,
+    return Listener(
+      onPointerHover: _onMouseMove,
+      child: MouseRegion(
+        cursor: _cursor,
+        child: GestureDetector(
+          onPanStart: _onPanStart,
+          onPanUpdate: _onPanUpdate,
+          onPanEnd: _onPanEnd,
+          onPanCancel: _onPanCancel,
+          child: Stack(
+            children: [
+              CustomPaint(
+                painter: _SelectionPainter(
+                  color: Colors.yellow,
+                  rects: _selectionRects,
+                  fill: true,
+                ),
+              ),
+              CustomPaint(
+                painter: _SelectionPainter(
+                  color: Colors.grey,
+                  rects: _textRects,
+                  fill: false,
+                ),
+              ),
+              Text(
+                widget.text,
+                key: _textKey,
+                style: widget.style,
+              ),
+              CustomPaint(
+                painter: _SelectionPainter(
+                  color: Colors.blue,
+                  rects: [_caretRect],
+                  fill: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
